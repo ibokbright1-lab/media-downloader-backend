@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+yt-dlp
+SQLAlchemy
+pydantic
+aiofiles
+python-multipart
+celery[redis]
+redis

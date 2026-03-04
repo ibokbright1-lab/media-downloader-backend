@@ -13,6 +13,9 @@ from downloader.extractor import extract_info
 from downloader.download import get_status, pause_task, resume_task
 from celery_app import celery_app
 from downloader.download import start_download  # fallback for local testing
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
+
 
 
 # Create DB tables if not exists
@@ -45,9 +48,9 @@ def health():
 
 class ExtractResponse(BaseModel):
     title: str
-    thumbnail: str | None
-    duration: int | None
-    formats: list
+    thumbnail: Optional[str]
+    duration: Optional[float]   # ✅ FIXED
+    formats: List[Dict[str, Any]]
 
 
 class StartDownloadRequest(BaseModel):
@@ -195,3 +198,4 @@ if __name__ == "__main__":
     import uvicorn
     print("Starting uvicorn (dev) on http://127.0.0.1:8000")
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+

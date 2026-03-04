@@ -42,54 +42,29 @@ def get_ydl_options(download: bool = False) -> Dict[str, Any]:
 # Metadata Extraction
 # ---------------------------------------------------
 
-def extract_info(url: str) -> Dict[str, Any]:
-    """
-    Extract metadata from a media URL without downloading.
-    Ensures duration is a float to avoid FastAPI validation errors.
-    """
+@app.post("/extract", response_model=ExtractResponse)
+def api_extract(payload: dict):
+    url = payload.get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="Missing url")
 
-    try:
-        with YoutubeDL(get_ydl_options(download=False)) as ydl:
-            info = ydl.extract_info(url, download=False)
+    info = extract_info(url)
 
-        # Ensure duration is float (or None)
-        duration = info.get("duration")
-        if duration is not None:
-            try:
-                duration = float(duration)
-            except Exception:
-                duration = None
+    # If extraction failed, return optional fields as None
+    if not info.get("success"):
+        return ExtractResponse(
+            title=None,
+            thumbnail=None,
+            duration=None,
+            formats=None
+        )
 
-        # Prepare formats
-        formats: List[Dict[str, Any]] = []
-        for f in info.get("formats", []):
-            if f.get("ext") in ["mp4", "webm", "m4a", "mp3"]:  # allow common media
-                formats.append({
-                    "format_id": f.get("format_id"),
-                    "ext": f.get("ext"),
-                    "resolution": f.get("resolution"),
-                    "filesize": f.get("filesize"),
-                    "vcodec": f.get("vcodec"),
-                    "acodec": f.get("acodec"),
-                    "tbr": f.get("tbr"),
-                })
-
-        return {
-            "success": True,
-            "title": info.get("title"),
-            "thumbnail": info.get("thumbnail"),
-            "duration": duration,
-            "uploader": info.get("uploader"),
-            "webpage_url": info.get("webpage_url"),
-            "formats": formats,
-        }
-
-    except DownloadError as e:
-        return {"success": False, "error": str(e)}
-
-    except Exception as e:
-        return {"success": False, "error": f"Unexpected error: {str(e)}"}
-
+    return ExtractResponse(
+        title=info.get("title"),
+        thumbnail=info.get("thumbnail"),
+        duration=info.get("duration"),
+        formats=info.get("formats")
+    )
 
 # ---------------------------------------------------
 # Download Function
@@ -115,3 +90,4 @@ def download_video(url: str) -> Dict[str, Any]:
 
     except Exception as e:
         return {"success": False, "error": f"Unexpected error: {str(e)}"}
+

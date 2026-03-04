@@ -1,41 +1,119 @@
-import yt_dlp
-from redis_client import cache_metadata, get_cached_metadata
+# extractor.py
 
-def extract_info(url: str):
-    cached = get_cached_metadata(url)
-    if cached:
-        return cached
+import os
+from typing import Dict, Any
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
-    ydl_opts = {'quiet': True, 'no_warnings': True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
 
-    # Filter useful formats
-    formats = []
-    seen = set()
-    for f in info.get("formats", []):
-        fid = f.get("format_id")
-        if fid in seen:
-            continue
-        seen.add(fid)
-        res = f.get("height")
-        ext = f.get("ext")
-        # Only standard resolutions
-        if f.get("acodec") != "none" and not f.get("vcodec") or res in [360,480,720,1080] or f.get("acodec") != "none":
-            formats.append({
-                "format_id": fid,
-                "ext": ext,
-                "resolution": f"{res}p" if res else None,
-                "filesize": f.get("filesize"),
-                "filesize_approx": f.get("filesize_approx"),
-                "tbr": f.get("tbr")
-            })
+# ---------------------------------------------------
+# YTDL Configuration
+# ---------------------------------------------------
 
-    result = {
-        "title": info.get("title"),
-        "thumbnail": info.get("thumbnail"),
-        "duration": info.get("duration"),
-        "formats": formats
+def get_ydl_options(download: bool = False) -> Dict[str, Any]:
+    """
+    Returns yt-dlp configuration options.
+    """
+
+    ydl_opts = {
+        "format": "bestvideo+bestaudio/best",
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "merge_output_format": "mp4",
+        "user_agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
     }
-    cache_metadata(url, result)
-    return result
+
+    # Use cookies file if it exists
+    if os.path.exists("cookies.txt"):
+        ydl_opts["cookiefile"] = "cookies.txt"
+
+    # Enable download mode
+    if download:
+        ydl_opts["outtmpl"] = "downloads/%(title)s.%(ext)s"
+
+    return ydl_opts
+
+
+# ---------------------------------------------------
+# Metadata Extraction
+# ---------------------------------------------------
+
+def extract_info(url: str) -> Dict[str, Any]:
+    """
+    Extract metadata from a media URL without downloading.
+    """
+
+    try:
+        with YoutubeDL(get_ydl_options(download=False)) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        return {
+            "success": True,
+            "title": info.get("title"),
+            "thumbnail": info.get("thumbnail"),
+            "duration": info.get("duration"),
+            "uploader": info.get("uploader"),
+            "webpage_url": info.get("webpage_url"),
+            "formats": [
+                {
+                    "format_id": f.get("format_id"),
+                    "ext": f.get("ext"),
+                    "resolution": f.get("resolution"),
+                    "filesize": f.get("filesize"),
+                }
+                for f in info.get("formats", [])
+                if f.get("ext") in ["mp4", "webm"]
+            ],
+        }
+
+    except DownloadError as e:
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {str(e)}",
+        }
+
+
+# ---------------------------------------------------
+# Download Function
+# ---------------------------------------------------
+
+def download_video(url: str) -> Dict[str, Any]:
+    """
+    Download video to server.
+    """
+
+    try:
+        os.makedirs("downloads", exist_ok=True)
+
+        with YoutubeDL(get_ydl_options(download=True)) as ydl:
+            info = ydl.extract_info(url, download=True)
+            file_path = ydl.prepare_filename(info)
+
+        return {
+            "success": True,
+            "title": info.get("title"),
+            "file_path": file_path,
+        }
+
+    except DownloadError as e:
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {str(e)}",
+        }

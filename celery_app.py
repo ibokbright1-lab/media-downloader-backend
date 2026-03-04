@@ -1,13 +1,10 @@
- 
+import os
 from celery import Celery
 
+redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+
 celery_app = Celery(
-    "media_downloader_backend",
-    broker="redis://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}/0",
-    backend="redis://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}/0"
+    "tasks",
+    broker=redis_url,
+    backend=redis_url,
 )
-
-
-celery_app.conf.task_routes = {
-    "downloader.download.start_download_task": {"queue": "downloads"},
-}

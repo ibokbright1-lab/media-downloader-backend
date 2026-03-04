@@ -1,10 +1,9 @@
 # extractor.py
 
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
-
 
 # ---------------------------------------------------
 # YTDL Configuration
@@ -14,7 +13,6 @@ def get_ydl_options(download: bool = False) -> Dict[str, Any]:
     """
     Returns yt-dlp configuration options.
     """
-
     ydl_opts = {
         "format": "bestvideo+bestaudio/best",
         "quiet": True,
@@ -34,6 +32,7 @@ def get_ydl_options(download: bool = False) -> Dict[str, Any]:
 
     # Enable download mode
     if download:
+        os.makedirs("downloads", exist_ok=True)
         ydl_opts["outtmpl"] = "downloads/%(title)s.%(ext)s"
 
     return ydl_opts
@@ -46,42 +45,50 @@ def get_ydl_options(download: bool = False) -> Dict[str, Any]:
 def extract_info(url: str) -> Dict[str, Any]:
     """
     Extract metadata from a media URL without downloading.
+    Ensures duration is a float to avoid FastAPI validation errors.
     """
 
     try:
         with YoutubeDL(get_ydl_options(download=False)) as ydl:
             info = ydl.extract_info(url, download=False)
 
-        return {
-            "success": True,
-            "title": info.get("title"),
-            "thumbnail": info.get("thumbnail"),
-            "duration": info.get("duration"),
-            "uploader": info.get("uploader"),
-            "webpage_url": info.get("webpage_url"),
-            "formats": [
-                {
+        # Ensure duration is float (or None)
+        duration = info.get("duration")
+        if duration is not None:
+            try:
+                duration = float(duration)
+            except Exception:
+                duration = None
+
+        # Prepare formats
+        formats: List[Dict[str, Any]] = []
+        for f in info.get("formats", []):
+            if f.get("ext") in ["mp4", "webm", "m4a", "mp3"]:  # allow common media
+                formats.append({
                     "format_id": f.get("format_id"),
                     "ext": f.get("ext"),
                     "resolution": f.get("resolution"),
                     "filesize": f.get("filesize"),
-                }
-                for f in info.get("formats", [])
-                if f.get("ext") in ["mp4", "webm"]
-            ],
+                    "vcodec": f.get("vcodec"),
+                    "acodec": f.get("acodec"),
+                    "tbr": f.get("tbr"),
+                })
+
+        return {
+            "success": True,
+            "title": info.get("title"),
+            "thumbnail": info.get("thumbnail"),
+            "duration": duration,
+            "uploader": info.get("uploader"),
+            "webpage_url": info.get("webpage_url"),
+            "formats": formats,
         }
 
     except DownloadError as e:
-        return {
-            "success": False,
-            "error": str(e),
-        }
+        return {"success": False, "error": str(e)}
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Unexpected error: {str(e)}",
-        }
+        return {"success": False, "error": f"Unexpected error: {str(e)}"}
 
 
 # ---------------------------------------------------
@@ -92,10 +99,7 @@ def download_video(url: str) -> Dict[str, Any]:
     """
     Download video to server.
     """
-
     try:
-        os.makedirs("downloads", exist_ok=True)
-
         with YoutubeDL(get_ydl_options(download=True)) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
@@ -107,13 +111,7 @@ def download_video(url: str) -> Dict[str, Any]:
         }
 
     except DownloadError as e:
-        return {
-            "success": False,
-            "error": str(e),
-        }
+        return {"success": False, "error": str(e)}
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Unexpected error: {str(e)}",
-        }
+        return {"success": False, "error": f"Unexpected error: {str(e)}"}

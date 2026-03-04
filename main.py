@@ -47,11 +47,14 @@ def health():
 # -------------------------------------------------
 
 class ExtractResponse(BaseModel):
-    title: str
-    thumbnail: Optional[str]
-    duration: Optional[float]   # ✅ FIXED
-    formats: List[Dict[str, Any]]
-
+    success: bool
+    title: Optional[str] = None
+    thumbnail: Optional[str] = None
+    duration: Optional[float] = None   # float, not int
+    uploader: Optional[str] = None
+    webpage_url: Optional[str] = None
+    formats: Optional[List[Dict[str, Any]]] = None
+    error: Optional[str] = None
 
 class StartDownloadRequest(BaseModel):
     url: str
@@ -198,4 +201,5 @@ if __name__ == "__main__":
     import uvicorn
     print("Starting uvicorn (dev) on http://127.0.0.1:8000")
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
 

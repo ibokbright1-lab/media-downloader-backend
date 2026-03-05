@@ -2,26 +2,29 @@
 
 import os
 from typing import Dict, Any, List, Optional
+
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
 
 # -----------------------------------
 # Router
 # -----------------------------------
 router = APIRouter()
 
+
 # -----------------------------------
 # Paths
 # -----------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+ROOT_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
 
-COOKIES_PATH = os.path.join(PROJECT_ROOT, "cookies.txt")
-DOWNLOADS_DIR = os.path.join(PROJECT_ROOT, "downloads")
+COOKIES_PATH = os.path.join(ROOT_DIR, "cookies.txt")
+DOWNLOADS_DIR = os.path.join(ROOT_DIR, "downloads")
 
-os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 # -----------------------------------
 # Response Models
@@ -37,13 +40,14 @@ class ExtractResponse(BaseModel):
     title: Optional[str]
     thumbnail: Optional[str]
     duration: Optional[float] = Field(
-        None, description="Video duration in seconds"
+        None,
+        description="Video duration in seconds"
     )
     formats: Optional[List[FormatModel]]
 
 
 # -----------------------------------
-# YTDL Configuration
+# YTDLP Options
 # -----------------------------------
 def get_ydl_options(download: bool = False) -> Dict[str, Any]:
 
@@ -51,32 +55,30 @@ def get_ydl_options(download: bool = False) -> Dict[str, Any]:
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "format": "best",
+        "extract_flat": False,
+        "skip_download": not download,
         "user_agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120 Safari/537.36"
+            "Chrome/120.0.0.0 Safari/537.36"
         ),
     }
 
-    # --------------------------
-    # LOAD COOKIES (IMPORTANT)
-    # --------------------------
+    # Use cookies if present (important for YouTube)
     if os.path.exists(COOKIES_PATH):
         ydl_opts["cookiefile"] = COOKIES_PATH
 
-    # --------------------------
-    # DOWNLOAD SETTINGS
-    # --------------------------
+    # Download settings
     if download:
-        ydl_opts.update(
-            {
-                "outtmpl": os.path.join(DOWNLOADS_DIR, "%(title)s.%(ext)s"),
-                "format": "bestvideo+bestaudio/best",
-                "merge_output_format": "mp4",
-                "concurrent_fragment_downloads": 5,
-            }
-        )
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+        ydl_opts.update({
+            "outtmpl": os.path.join(
+                DOWNLOADS_DIR,
+                "%(title).150s.%(ext)s"
+            ),
+            "merge_output_format": "mp4"
+        })
 
     return ydl_opts
 
@@ -85,6 +87,9 @@ def get_ydl_options(download: bool = False) -> Dict[str, Any]:
 # Metadata Extraction
 # -----------------------------------
 def extract_info(url: str) -> Dict[str, Any]:
+    """
+    Extract video metadata without downloading.
+    """
 
     try:
 
@@ -92,78 +97,106 @@ def extract_info(url: str) -> Dict[str, Any]:
             info = ydl.extract_info(url, download=False)
 
         if not info:
-            return {"success": False, "error": "No video information found"}
+            return {
+                "success": False,
+                "error": "No media information found"
+            }
 
-        # --------------------------
-        # Fix duration type
-        # --------------------------
-        duration = info.get("duration")
-        duration_float = float(duration) if duration else None
+        # Convert duration to float
+        duration_value = info.get("duration")
+        duration: Optional[float] = None
 
-        formats_list = []
+        if duration_value:
+            try:
+                duration = float(duration_value)
+            except Exception:
+                duration = None
 
-        # --------------------------
-        # Filter usable formats
-        # --------------------------
+        formats: List[Dict[str, Any]] = []
+
         for f in info.get("formats", []):
 
             if not f.get("format_id"):
                 continue
 
-            if not f.get("ext"):
+            ext = f.get("ext")
+
+            # Allow common media formats
+            if ext not in [
+                "mp4",
+                "webm",
+                "m4a",
+                "mp3",
+                "aac",
+                "opus"
+            ]:
                 continue
 
-            filesize = f.get("filesize") or f.get("filesize_approx")
-
-            formats_list.append(
-                {
-                    "format_id": f.get("format_id"),
-                    "ext": f.get("ext"),
-                    "resolution": f.get("resolution")
-                    or f"{f.get('height')}p"
-                    if f.get("height")
-                    else None,
-                    "filesize": filesize,
-                }
-            )
+            formats.append({
+                "format_id": f.get("format_id"),
+                "ext": ext,
+                "resolution": f.get("resolution")
+                or f.get("format_note"),
+                "filesize": f.get("filesize"),
+            })
 
         return {
             "success": True,
             "title": info.get("title"),
             "thumbnail": info.get("thumbnail"),
-            "duration": duration_float,
-            "formats": formats_list,
+            "duration": duration,
+            "formats": formats
         }
 
     except DownloadError as e:
-        return {"success": False, "error": f"yt-dlp error: {str(e)}"}
+
+        return {
+            "success": False,
+            "error": f"DownloadError: {str(e)}"
+        }
 
     except Exception as e:
-        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+        return {
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }
 
 
 # -----------------------------------
 # Download Function
 # -----------------------------------
 def download_video(url: str) -> Dict[str, Any]:
+    """
+    Direct download helper (used only if needed).
+    """
 
     try:
 
         with YoutubeDL(get_ydl_options(download=True)) as ydl:
             info = ydl.extract_info(url, download=True)
+
             file_path = ydl.prepare_filename(info)
 
         return {
             "success": True,
             "title": info.get("title"),
-            "file_path": file_path,
+            "file_path": file_path
         }
 
     except DownloadError as e:
-        return {"success": False, "error": f"yt-dlp error: {str(e)}"}
+
+        return {
+            "success": False,
+            "error": f"DownloadError: {str(e)}"
+        }
 
     except Exception as e:
-        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+        return {
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }
 
 
 # -----------------------------------
@@ -175,19 +208,23 @@ def api_extract(payload: Dict[str, Any]):
     url = payload.get("url")
 
     if not url:
-        raise HTTPException(status_code=400, detail="Missing url")
+        raise HTTPException(
+            status_code=400,
+            detail="Missing url"
+        )
 
     info = extract_info(url)
 
     if not info.get("success"):
+
         raise HTTPException(
             status_code=400,
-            detail=info.get("error", "Extraction failed"),
+            detail=info.get("error", "Extraction failed")
         )
 
     return ExtractResponse(
         title=info.get("title"),
         thumbnail=info.get("thumbnail"),
         duration=info.get("duration"),
-        formats=info.get("formats"),
+        formats=info.get("formats")
     )

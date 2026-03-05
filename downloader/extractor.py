@@ -13,26 +13,31 @@ from pydantic import BaseModel, Field
 router = APIRouter()
 
 # -----------------------------------
-# Constants
+# Paths
 # -----------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-COOKIES_PATH = os.path.join(BASE_DIR, "..", "cookies.txt")
-DOWNLOADS_DIR = os.path.join(BASE_DIR, "..", "downloads")
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+
+COOKIES_PATH = os.path.join(PROJECT_ROOT, "cookies.txt")
+DOWNLOADS_DIR = os.path.join(PROJECT_ROOT, "downloads")
+
+os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 # -----------------------------------
-# Response Model
+# Response Models
 # -----------------------------------
 class FormatModel(BaseModel):
     format_id: Optional[str]
     ext: Optional[str]
     resolution: Optional[str]
+    filesize: Optional[int]
 
 
 class ExtractResponse(BaseModel):
     title: Optional[str]
     thumbnail: Optional[str]
     duration: Optional[float] = Field(
-        None, description="Video duration in seconds (float)"
+        None, description="Video duration in seconds"
     )
     formats: Optional[List[FormatModel]]
 
@@ -41,34 +46,36 @@ class ExtractResponse(BaseModel):
 # YTDL Configuration
 # -----------------------------------
 def get_ydl_options(download: bool = False) -> Dict[str, Any]:
-    """
-    Returns yt-dlp configuration.
-    Includes cookies.txt automatically if present.
-    """
 
-    ydl_opts: Dict[str, Any] = {
+    ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "format": "bestvideo+bestaudio/best",
-        "merge_output_format": "mp4",
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        },
+        "format": "best",
+        "user_agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120 Safari/537.36"
+        ),
     }
 
-    # Add cookies if available
+    # --------------------------
+    # LOAD COOKIES (IMPORTANT)
+    # --------------------------
     if os.path.exists(COOKIES_PATH):
         ydl_opts["cookiefile"] = COOKIES_PATH
 
+    # --------------------------
+    # DOWNLOAD SETTINGS
+    # --------------------------
     if download:
-        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
-        ydl_opts["outtmpl"] = os.path.join(
-            DOWNLOADS_DIR, "%(title)s.%(ext)s"
+        ydl_opts.update(
+            {
+                "outtmpl": os.path.join(DOWNLOADS_DIR, "%(title)s.%(ext)s"),
+                "format": "bestvideo+bestaudio/best",
+                "merge_output_format": "mp4",
+                "concurrent_fragment_downloads": 5,
+            }
         )
 
     return ydl_opts
@@ -78,32 +85,47 @@ def get_ydl_options(download: bool = False) -> Dict[str, Any]:
 # Metadata Extraction
 # -----------------------------------
 def extract_info(url: str) -> Dict[str, Any]:
-    """
-    Extract metadata without downloading the video.
-    """
 
     try:
+
         with YoutubeDL(get_ydl_options(download=False)) as ydl:
             info = ydl.extract_info(url, download=False)
 
         if not info:
             return {"success": False, "error": "No video information found"}
 
-        # Force duration to float
-        duration_value = info.get("duration")
-        duration_float: Optional[float] = (
-            float(duration_value) if duration_value else None
-        )
+        # --------------------------
+        # Fix duration type
+        # --------------------------
+        duration = info.get("duration")
+        duration_float = float(duration) if duration else None
 
-        formats_list = [
-            {
-                "format_id": f.get("format_id"),
-                "ext": f.get("ext"),
-                "resolution": f.get("resolution"),
-            }
-            for f in info.get("formats", [])
-            if f.get("format_id")
-        ]
+        formats_list = []
+
+        # --------------------------
+        # Filter usable formats
+        # --------------------------
+        for f in info.get("formats", []):
+
+            if not f.get("format_id"):
+                continue
+
+            if not f.get("ext"):
+                continue
+
+            filesize = f.get("filesize") or f.get("filesize_approx")
+
+            formats_list.append(
+                {
+                    "format_id": f.get("format_id"),
+                    "ext": f.get("ext"),
+                    "resolution": f.get("resolution")
+                    or f"{f.get('height')}p"
+                    if f.get("height")
+                    else None,
+                    "filesize": filesize,
+                }
+            )
 
         return {
             "success": True,
@@ -114,7 +136,7 @@ def extract_info(url: str) -> Dict[str, Any]:
         }
 
     except DownloadError as e:
-        return {"success": False, "error": f"DownloadError: {str(e)}"}
+        return {"success": False, "error": f"yt-dlp error: {str(e)}"}
 
     except Exception as e:
         return {"success": False, "error": f"Unexpected error: {str(e)}"}
@@ -124,11 +146,9 @@ def extract_info(url: str) -> Dict[str, Any]:
 # Download Function
 # -----------------------------------
 def download_video(url: str) -> Dict[str, Any]:
-    """
-    Download video to local downloads folder.
-    """
 
     try:
+
         with YoutubeDL(get_ydl_options(download=True)) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
@@ -140,7 +160,7 @@ def download_video(url: str) -> Dict[str, Any]:
         }
 
     except DownloadError as e:
-        return {"success": False, "error": f"DownloadError: {str(e)}"}
+        return {"success": False, "error": f"yt-dlp error: {str(e)}"}
 
     except Exception as e:
         return {"success": False, "error": f"Unexpected error: {str(e)}"}
@@ -153,6 +173,7 @@ def download_video(url: str) -> Dict[str, Any]:
 def api_extract(payload: Dict[str, Any]):
 
     url = payload.get("url")
+
     if not url:
         raise HTTPException(status_code=400, detail="Missing url")
 

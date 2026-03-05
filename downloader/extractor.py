@@ -14,8 +14,8 @@ from database.db import SessionLocal, Base, engine
 from database.models import Download
 from celery_app import celery_app
 
-# Import extractor router and functions
-from downloader.extractor import router as extractor_router, download_video
+# Import only the router (avoid circular import)
+from downloader.extractor import router as extractor_router
 from downloader.download import get_status, pause_task, resume_task, start_download
 
 # -----------------------------------
@@ -94,16 +94,10 @@ def api_download(req: StartDownloadRequest, db: Session = Depends(get_db)):
     try:
         celery_app.send_task(
             "downloader.download.start_download_task",
-            args=[
-                task_id,
-                req.url,
-                req.format_id,
-                req.is_audio,
-                req.audio_bitrate,
-            ],
+            args=[task_id, req.url, req.format_id, req.is_audio, req.audio_bitrate],
         )
     except Exception:
-        # Fallback for local testing
+        # Fallback for local testing (no Celery worker running)
         from concurrent.futures import ThreadPoolExecutor
 
         ThreadPoolExecutor(max_workers=1).submit(
@@ -152,13 +146,7 @@ def api_resume(task_id: str):
 # -----------------------------------
 @app.get("/history")
 def api_history(limit: int = 50, db: Session = Depends(get_db)):
-    rows = (
-        db.query(Download)
-        .order_by(Download.created_at.desc())
-        .limit(limit)
-        .all()
-    )
-
+    rows = db.query(Download).order_by(Download.created_at.desc()).limit(limit).all()
     return [
         {
             "id": r.id,
@@ -177,7 +165,6 @@ def api_history(limit: int = 50, db: Session = Depends(get_db)):
 # -----------------------------------
 @app.get("/download/file/{task_id}")
 def download_file(task_id: str, db: Session = Depends(get_db)):
-
     row = db.query(Download).filter(Download.id == task_id).first()
 
     if not row or not row.filepath:
@@ -186,7 +173,7 @@ def download_file(task_id: str, db: Session = Depends(get_db)):
     if not os.path.exists(row.filepath):
         raise HTTPException(status_code=404, detail="File missing on disk")
 
-    # Serve the file with original name
+    # Serve the file with original name intact
     return FileResponse(
         path=row.filepath,
         filename=os.path.basename(row.filepath),
@@ -200,9 +187,4 @@ if __name__ == "__main__":
     import uvicorn
 
     print("Starting server on http://127.0.0.1:8000")
-    uvicorn.run(
-        "main:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True,
-    )
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

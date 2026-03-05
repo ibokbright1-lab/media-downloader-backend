@@ -1,230 +1,208 @@
-# downloader/extractor.py
+# main.py
 
 import os
-from typing import Dict, Any, List, Optional
+import uuid
+from datetime import datetime
+from typing import List
 
-from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadError
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from database.db import SessionLocal, Base, engine
+from database.models import Download
+from celery_app import celery_app
 
-
-# -----------------------------------
-# Router
-# -----------------------------------
-router = APIRouter()
-
-
-# -----------------------------------
-# Paths
-# -----------------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
-
-COOKIES_PATH = os.path.join(ROOT_DIR, "cookies.txt")
-DOWNLOADS_DIR = os.path.join(ROOT_DIR, "downloads")
-
+# Import extractor router and functions
+from downloader.extractor import router as extractor_router, download_video
+from downloader.download import get_status, pause_task, resume_task, start_download
 
 # -----------------------------------
-# Response Models
+# Database setup
 # -----------------------------------
-class FormatModel(BaseModel):
-    format_id: Optional[str]
-    ext: Optional[str]
-    resolution: Optional[str]
-    filesize: Optional[int]
-
-
-class ExtractResponse(BaseModel):
-    title: Optional[str]
-    thumbnail: Optional[str]
-    duration: Optional[float] = Field(
-        None,
-        description="Video duration in seconds"
-    )
-    formats: Optional[List[FormatModel]]
-
+Base.metadata.create_all(bind=engine)
 
 # -----------------------------------
-# YTDLP Options
+# FastAPI app
 # -----------------------------------
-def get_ydl_options(download: bool = False) -> Dict[str, Any]:
+app = FastAPI(
+    title="Media Downloader Backend",
+    version="1.0.1",
+)
 
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "extract_flat": False,
-        "skip_download": not download,
-        "user_agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
+# Include extractor routes
+app.include_router(extractor_router)
+
+# -----------------------------------
+# Dependency - DB Session
+# -----------------------------------
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# -----------------------------------
+# Pydantic Models
+# -----------------------------------
+class StartDownloadRequest(BaseModel):
+    url: str
+    format_id: str
+    is_audio: bool = False
+    audio_bitrate: str | None = "128k"
+
+# -----------------------------------
+# Root & Health
+# -----------------------------------
+@app.get("/")
+def root():
+    return {
+        "message": "Media Downloader Backend is running",
+        "docs": "/docs",
+        "health": "/health",
     }
 
-    # Use cookies if present (important for YouTube)
-    if os.path.exists(COOKIES_PATH):
-        ydl_opts["cookiefile"] = COOKIES_PATH
-
-    # Download settings
-    if download:
-        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
-
-        ydl_opts.update({
-            "outtmpl": os.path.join(
-                DOWNLOADS_DIR,
-                "%(title).150s.%(ext)s"
-            ),
-            "merge_output_format": "mp4"
-        })
-
-    return ydl_opts
-
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 # -----------------------------------
-# Metadata Extraction
+# Start Download
 # -----------------------------------
-def extract_info(url: str) -> Dict[str, Any]:
-    """
-    Extract video metadata without downloading.
-    """
+@app.post("/download")
+def api_download(req: StartDownloadRequest, db: Session = Depends(get_db)):
+    task_id = str(uuid.uuid4())
 
+    # Create DB entry
+    new_download = Download(
+        id=task_id,
+        url=req.url,
+        title="",
+        format_id=req.format_id,
+        is_audio=req.is_audio,
+        audio_bitrate=req.audio_bitrate,
+        status="queued",
+        created_at=datetime.utcnow(),
+    )
+
+    db.add(new_download)
+    db.commit()
+
+    # Start download via Celery
     try:
+        celery_app.send_task(
+            "downloader.download.start_download_task",
+            args=[
+                task_id,
+                req.url,
+                req.format_id,
+                req.is_audio,
+                req.audio_bitrate,
+            ],
+        )
+    except Exception:
+        # Fallback for local testing
+        from concurrent.futures import ThreadPoolExecutor
 
-        with YoutubeDL(get_ydl_options(download=False)) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-        if not info:
-            return {
-                "success": False,
-                "error": "No media information found"
-            }
-
-        # Convert duration to float
-        duration_value = info.get("duration")
-        duration: Optional[float] = None
-
-        if duration_value:
-            try:
-                duration = float(duration_value)
-            except Exception:
-                duration = None
-
-        formats: List[Dict[str, Any]] = []
-
-        for f in info.get("formats", []):
-
-            if not f.get("format_id"):
-                continue
-
-            ext = f.get("ext")
-
-            # Allow common media formats
-            if ext not in [
-                "mp4",
-                "webm",
-                "m4a",
-                "mp3",
-                "aac",
-                "opus"
-            ]:
-                continue
-
-            formats.append({
-                "format_id": f.get("format_id"),
-                "ext": ext,
-                "resolution": f.get("resolution")
-                or f.get("format_note"),
-                "filesize": f.get("filesize"),
-            })
-
-        return {
-            "success": True,
-            "title": info.get("title"),
-            "thumbnail": info.get("thumbnail"),
-            "duration": duration,
-            "formats": formats
-        }
-
-    except DownloadError as e:
-
-        return {
-            "success": False,
-            "error": f"DownloadError: {str(e)}"
-        }
-
-    except Exception as e:
-
-        return {
-            "success": False,
-            "error": f"Unexpected error: {str(e)}"
-        }
-
-
-# -----------------------------------
-# Download Function
-# -----------------------------------
-def download_video(url: str) -> Dict[str, Any]:
-    """
-    Direct download helper (used only if needed).
-    """
-
-    try:
-
-        with YoutubeDL(get_ydl_options(download=True)) as ydl:
-            info = ydl.extract_info(url, download=True)
-
-            file_path = ydl.prepare_filename(info)
-
-        return {
-            "success": True,
-            "title": info.get("title"),
-            "file_path": file_path
-        }
-
-    except DownloadError as e:
-
-        return {
-            "success": False,
-            "error": f"DownloadError: {str(e)}"
-        }
-
-    except Exception as e:
-
-        return {
-            "success": False,
-            "error": f"Unexpected error: {str(e)}"
-        }
-
-
-# -----------------------------------
-# API Endpoint
-# -----------------------------------
-@router.post("/extract", response_model=ExtractResponse)
-def api_extract(payload: Dict[str, Any]):
-
-    url = payload.get("url")
-
-    if not url:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing url"
+        ThreadPoolExecutor(max_workers=1).submit(
+            start_download,
+            task_id,
+            req.url,
+            req.format_id,
+            req.is_audio,
+            req.audio_bitrate,
         )
 
-    info = extract_info(url)
+    return {"task_id": task_id}
 
-    if not info.get("success"):
+# -----------------------------------
+# Task Status
+# -----------------------------------
+@app.get("/status/{task_id}")
+def api_status(task_id: str):
+    status = get_status(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return status
 
-        raise HTTPException(
-            status_code=400,
-            detail=info.get("error", "Extraction failed")
-        )
+# -----------------------------------
+# Pause Task
+# -----------------------------------
+@app.post("/pause/{task_id}")
+def api_pause(task_id: str):
+    ok = pause_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Task not found or cannot pause")
+    return {"task_id": task_id, "paused": True}
 
-    return ExtractResponse(
-        title=info.get("title"),
-        thumbnail=info.get("thumbnail"),
-        duration=info.get("duration"),
-        formats=info.get("formats")
+# -----------------------------------
+# Resume Task
+# -----------------------------------
+@app.post("/resume/{task_id}")
+def api_resume(task_id: str):
+    ok = resume_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Task not found or cannot resume")
+    return {"task_id": task_id, "resumed": True}
+
+# -----------------------------------
+# Download History
+# -----------------------------------
+@app.get("/history")
+def api_history(limit: int = 50, db: Session = Depends(get_db)):
+    rows = (
+        db.query(Download)
+        .order_by(Download.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {
+            "id": r.id,
+            "url": r.url,
+            "title": r.title,
+            "format_id": r.format_id,
+            "status": r.status,
+            "filepath": r.filepath,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+# -----------------------------------
+# Download File
+# -----------------------------------
+@app.get("/download/file/{task_id}")
+def download_file(task_id: str, db: Session = Depends(get_db)):
+
+    row = db.query(Download).filter(Download.id == task_id).first()
+
+    if not row or not row.filepath:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not os.path.exists(row.filepath):
+        raise HTTPException(status_code=404, detail="File missing on disk")
+
+    # Serve the file with original name
+    return FileResponse(
+        path=row.filepath,
+        filename=os.path.basename(row.filepath),
+        media_type="application/octet-stream",
+    )
+
+# -----------------------------------
+# Local run for development
+# -----------------------------------
+if __name__ == "__main__":
+    import uvicorn
+
+    print("Starting server on http://127.0.0.1:8000")
+    uvicorn.run(
+        "main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True,
     )

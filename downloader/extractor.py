@@ -30,20 +30,22 @@ class ExtractResponse(BaseModel):
 # -------------------------------
 # YTDL Configuration (Improved)
 # -------------------------------
+# -------------------------------
+# YTDL Configuration
+# -------------------------------
 def get_ydl_options(download: bool = False) -> dict:
     """
-    Return yt-dlp options. Aggressive extraction to handle tricky URLs.
+    Returns yt-dlp options. If download=True, will set output template.
+    This version is more forgiving to missing formats.
     """
     ydl_opts = {
-        "format": "best",                  # Get best available quality
-        "quiet": True,                     # Suppress console output
-        "no_warnings": True,               # Hide warnings
-        "extract_flat": False,             # Do not just 'peek' at playlists
-        "force_generic_extractor": False,  # Use site-specific extractor if possible
-        "merge_output_format": "mp4",      # Merge video+audio into mp4
-        "nocheckcertificate": True,
-        "ignoreerrors": False,
+        "format": "best",             # Always try to get the best quality available
+        "ignoreerrors": True,          # <-- key change: ignore missing formats
+        "quiet": True,
+        "no_warnings": True,
         "noplaylist": True,
+        "merge_output_format": "mp4",
+        "nocheckcertificate": True,
         "user_agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -61,7 +63,6 @@ def get_ydl_options(download: bool = False) -> dict:
         ydl_opts["outtmpl"] = "downloads/%(title)s.%(ext)s"
 
     return ydl_opts
-
 
 # -------------------------------
 # Metadata Extraction (Improved)
@@ -177,4 +178,5 @@ def api_extract(payload: ExtractRequest):
         duration=info.get("duration"),
         formats=info.get("formats"),
     )
+
 

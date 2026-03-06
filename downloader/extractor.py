@@ -25,22 +25,18 @@ class ExtractResponse(BaseModel):
 
 
 # -------------------------------
-# YTDL Configuration
-# -------------------------------
-# -------------------------------
-# YTDL Configuration (Improved)
-# -------------------------------
-# -------------------------------
-# YTDL Configuration
+# YTDL Configuration (Forgiving)
 # -------------------------------
 def get_ydl_options(download: bool = False) -> dict:
     """
     Returns yt-dlp options. If download=True, will set output template.
-    This version is more forgiving to missing formats.
+    Aggressive and forgiving extraction to avoid 'No video information found'.
     """
     ydl_opts = {
-        "format": "best",             # Always try to get the best quality available
-        "ignoreerrors": True,          # <-- key change: ignore missing formats
+        "format": "best",             # Try to get the best quality available
+        "ignoreerrors": True,          # Ignore missing formats
+        "extract_flat": False,         # Ensure yt-dlp fully inspects the URL
+        "dump_single_json": True,      # Force JSON metadata output
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
@@ -64,45 +60,6 @@ def get_ydl_options(download: bool = False) -> dict:
 
     return ydl_opts
 
-# -------------------------------
-# Metadata Extraction (Improved)
-# -------------------------------
-def extract_info(url: str) -> dict:
-    """
-    Extract metadata without downloading. Aggressive options to reduce 'No video information found'.
-    """
-    try:
-        with YoutubeDL(get_ydl_options(download=False)) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-        if not info:
-            return {"success": False, "error": "No video information found"}
-
-        # Convert duration to float
-        duration = info.get("duration")
-        if duration is not None:
-            duration = float(duration)
-
-        formats = [
-            {
-                "format_id": f.get("format_id"),
-                "ext": f.get("ext"),
-                "resolution": f.get("resolution"),
-            }
-            for f in info.get("formats", [])
-            if f.get("format_id")
-        ]
-
-        return {
-            "success": True,
-            "title": info.get("title"),
-            "thumbnail": info.get("thumbnail"),
-            "duration": duration,
-            "formats": formats,
-        }
-
-    except Exception as e:
-        return {"success": False, "error": f"Extraction failed: {str(e)}"}
 
 # -------------------------------
 # Metadata Extraction
@@ -123,14 +80,13 @@ def extract_info(url: str) -> Dict[str, Any]:
         if duration is not None:
             duration = float(duration)
 
-        # Include video/audio quality info
         formats = [
             {
                 "format_id": f.get("format_id"),
                 "ext": f.get("ext"),
                 "resolution": f.get("resolution"),
                 "fps": f.get("fps"),
-                "abr": f.get("abr"),  # audio bitrate
+                "abr": f.get("abr"),      # audio bitrate
                 "filesize": f.get("filesize"),
             }
             for f in info.get("formats", [])
@@ -166,10 +122,7 @@ def api_extract(payload: ExtractRequest):
     info = extract_info(payload.url)
 
     if not info.get("success"):
-        return ExtractResponse(
-            success=False,
-            error=info.get("error"),
-        )
+        return ExtractResponse(success=False, error=info.get("error"))
 
     return ExtractResponse(
         success=True,
@@ -178,5 +131,3 @@ def api_extract(payload: ExtractRequest):
         duration=info.get("duration"),
         formats=info.get("formats"),
     )
-
-

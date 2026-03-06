@@ -35,7 +35,7 @@ def get_ydl_options(download: bool = False) -> Dict[str, Any]:
         "noplaylist": True,
         "merge_output_format": "mp4",
         "nocheckcertificate": True,
-        "ignoreerrors": False,
+        "ignoreerrors": True,  # safer extraction
         "user_agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -70,16 +70,19 @@ def extract_info(url: str) -> Dict[str, Any]:
         if not info:
             return {"success": False, "error": "No video information found"}
 
-        # Ensure duration is float
         duration = info.get("duration")
         if duration is not None:
             duration = float(duration)
 
+        # Include video/audio quality info
         formats = [
             {
                 "format_id": f.get("format_id"),
                 "ext": f.get("ext"),
                 "resolution": f.get("resolution"),
+                "fps": f.get("fps"),
+                "abr": f.get("abr"),  # audio bitrate
+                "filesize": f.get("filesize"),
             }
             for f in info.get("formats", [])
             if f.get("format_id")
@@ -100,31 +103,6 @@ def extract_info(url: str) -> Dict[str, Any]:
 
 
 # -------------------------------
-# Download Function
-# -------------------------------
-def download_video(url: str) -> Dict[str, Any]:
-    try:
-        with YoutubeDL(get_ydl_options(download=True)) as ydl:
-            info = ydl.extract_info(url, download=True)
-
-            if not info:
-                return {"success": False, "error": "Download failed"}
-
-            file_path = ydl.prepare_filename(info)
-
-        return {
-            "success": True,
-            "title": info.get("title"),
-            "file_path": file_path,
-        }
-
-    except DownloadError as e:
-        return {"success": False, "error": str(e)}
-    except Exception as e:
-        return {"success": False, "error": f"Unexpected error: {str(e)}"}
-
-
-# -------------------------------
 # API Endpoint
 # -------------------------------
 class ExtractRequest(BaseModel):
@@ -133,24 +111,21 @@ class ExtractRequest(BaseModel):
 
 @router.post("/extract", response_model=ExtractResponse)
 def api_extract(payload: ExtractRequest):
-
     if not payload.url:
         raise HTTPException(status_code=400, detail="Missing url")
 
     info = extract_info(payload.url)
 
-    # If extraction failed
     if not info.get("success"):
         return ExtractResponse(
             success=False,
             error=info.get("error"),
         )
 
-    # Success response
     return ExtractResponse(
         success=True,
         title=info.get("title"),
         thumbnail=info.get("thumbnail"),
         duration=info.get("duration"),
         formats=info.get("formats"),
-    ) 
+    )

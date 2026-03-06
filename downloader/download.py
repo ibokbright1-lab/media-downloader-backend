@@ -1,5 +1,3 @@
-# downloader/download.py
-
 import os
 import subprocess
 from datetime import datetime, timedelta
@@ -13,7 +11,7 @@ from redis_client import set_task_state, get_task_state, delete_task_state
 from celery_app import celery_app
 
 # ----------------------------
-# Folder paths
+# Folder paths (Render-safe)
 # ----------------------------
 BASE_DIR = os.getcwd()
 DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
@@ -86,26 +84,34 @@ def ensure_fresh_or_restart(task_id):
 # ----------------------------
 # Quality → yt-dlp format
 # ----------------------------
-def build_format_string(quality: str, is_audio=False):
-    if is_audio:
-        return "bestaudio/best"
-    quality_map = {
-        "360p": "bv*[height<=360]+ba/b[height<=360]",
-        "480p": "bv*[height<=480]+ba/b[height<=480]",
-        "720p": "bv*[height<=720]+ba/b[height<=720]",
-        "1080p": "bv*[height<=1080]+ba/b[height<=1080]",
-    }
-    return quality_map.get(quality, "bv*[height<=720]+ba/b[height<=720]")
+QUALITY_MAP = {
+    "360p": "bv*[height<=360]+ba/b[height<=360]",
+    "480p": "bv*[height<=480]+ba/b[height<=480]",
+    "720p": "bv*[height<=720]+ba/b[height<=720]",
+    "1080p": "bv*[height<=1080]+ba/b[height<=1080]",
+}
+
+def build_format_string(quality: str):
+    return QUALITY_MAP.get(quality, "bv*[height<=720]+ba/b[height<=720]")
 
 # ----------------------------
 # FFmpeg helpers
 # ----------------------------
-def convert_audio_with_ffmpeg(input_path: str, out_path: str, bitrate: str = "128k"):
-    cmd = ["ffmpeg", "-y", "-i", input_path, "-vn", "-ab", bitrate, "-ar", "44100", "-ac", "2", out_path]
+def convert_audio_with_ffmpeg(input_path: str, out_path: str, bitrate: str):
+    cmd = [
+        "ffmpeg", "-y", "-i", input_path,
+        "-vn", "-ab", bitrate, "-ar", "44100", "-ac", "2",
+        out_path
+    ]
     subprocess.run(cmd, check=True)
 
 def compress_video_with_ffmpeg(input_path: str, out_path: str, crf: int = 23, preset: str = "fast"):
-    cmd = ["ffmpeg", "-y", "-i", input_path, "-vcodec", "libx264", "-crf", str(crf), "-preset", preset, "-acodec", "aac", "-b:a", "128k", out_path]
+    cmd = [
+        "ffmpeg", "-y", "-i", input_path,
+        "-vcodec", "libx264", "-crf", str(crf), "-preset", preset,
+        "-acodec", "aac", "-b:a", "128k",
+        out_path
+    ]
     subprocess.run(cmd, check=True)
 
 # ----------------------------
@@ -117,7 +123,8 @@ def start_download_task(self, task_id, url, quality="720p", is_audio=False, audi
     ensure_fresh_or_restart(task_id)
 
     out_template = os.path.join(DOWNLOADS_DIR, f"{task_id}.%(ext)s")
-    format_string = build_format_string(quality, is_audio=is_audio)
+    format_string = build_format_string(quality)
+
     ydl_opts = {
         "outtmpl": out_template,
         "continuedl": True,
@@ -128,9 +135,14 @@ def start_download_task(self, task_id, url, quality="720p", is_audio=False, audi
         "format": format_string,
         "concurrent_fragment_downloads": 5,
         "retries": 10,
+        "extract_flat": False,
+        "force_generic_extractor": False,
+        "nocheckcertificate": True,
+        "cookiefile": os.path.join(os.getcwd(), "cookies.txt") if os.path.exists("cookies.txt") else None,
     }
 
     update_db(task_id, status="started")
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
@@ -150,7 +162,9 @@ def start_download_task(self, task_id, url, quality="720p", is_audio=False, audi
     db.close()
     final_path = row.filepath if row else None
 
+    # ------------------------
     # AUDIO conversion
+    # ------------------------
     if final_path and is_audio:
         base, _ = os.path.splitext(final_path)
         out_path = base + ".mp3"
@@ -160,7 +174,9 @@ def start_download_task(self, task_id, url, quality="720p", is_audio=False, audi
             update_db(task_id, filepath=out_path, status="finished")
         except Exception:
             update_db(task_id, status="failed")
+    # ------------------------
     # VIDEO compression
+    # ------------------------
     elif final_path:
         base, ext = os.path.splitext(final_path)
         compressed = base + ".compressed" + ext
@@ -193,12 +209,17 @@ def resume_task(task_id: str):
     state["paused"] = False
     state["paused_at"] = None
     set_task_state(task_id, state)
+
     db = SessionLocal()
     row = db.query(Download).filter(Download.id == task_id).first()
     db.close()
     if not row:
         return False
-    celery_app.send_task("downloader.download.start_download_task", args=[task_id, row.url, row.format_id, row.is_audio, row.audio_bitrate])
+
+    celery_app.send_task(
+        "downloader.download.start_download_task",
+        args=[task_id, row.url, row.format_id, row.is_audio, row.audio_bitrate]
+    )
     return True
 
 def get_status(task_id: str):
@@ -220,6 +241,8 @@ def get_status(task_id: str):
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
+# ----------------------------
 # Local fallback
+# ----------------------------
 def start_download(task_id, url, quality="720p", is_audio=False, audio_bitrate="128k"):
     start_download_task(task_id, url, quality, is_audio, audio_bitrate)

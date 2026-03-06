@@ -91,9 +91,49 @@ QUALITY_MAP = {
     "1080p": "bv*[height<=1080]+ba/b[height<=1080]",
 }
 
-def build_format_string(quality: str):
-    return QUALITY_MAP.get(quality, "bv*[height<=720]+ba/b[height<=720]")
+# ----------------------------
+# Production Quality Selector
+# ----------------------------
 
+def build_format_string(quality: str, is_audio: bool = False):
+
+    # Audio downloads
+    if is_audio:
+        return "bestaudio/best"
+
+    quality_map = {
+        "360p": 360,
+        "480p": 480,
+        "720p": 720,
+        "1080p": 1080,
+    }
+
+    target_height = quality_map.get(quality, 720)
+
+    """
+    Production strategy:
+
+    1. Prefer H264 video (best compatibility)
+    2. Exact resolution if available
+    3. Best video <= requested resolution
+    4. Fallback 480p
+    5. Fallback 360p
+    6. Absolute fallback = best available
+    """
+
+    selector = (
+        f"bestvideo[vcodec^=avc1][height={target_height}]+bestaudio/"
+        f"bestvideo[vcodec^=avc1][height<={target_height}]+bestaudio/"
+        "bestvideo[vcodec^=avc1][height<=480]+bestaudio/"
+        "bestvideo[vcodec^=avc1][height<=360]+bestaudio/"
+        f"bestvideo[height={target_height}]+bestaudio/"
+        f"bestvideo[height<={target_height}]+bestaudio/"
+        "bestvideo[height<=480]+bestaudio/"
+        "bestvideo[height<=360]+bestaudio/"
+        "best"
+    )
+
+    return selector
 # ----------------------------
 # FFmpeg helpers
 # ----------------------------
@@ -246,3 +286,4 @@ def get_status(task_id: str):
 # ----------------------------
 def start_download(task_id, url, quality="720p", is_audio=False, audio_bitrate="128k"):
     start_download_task(task_id, url, quality, is_audio, audio_bitrate)
+

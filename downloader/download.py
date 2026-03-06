@@ -178,8 +178,25 @@ def start_download_task(self, task_id, url, format_id=None, is_audio=False, audi
         return
 
     # ----------------------------
-    # VIDEO SCALING (optional)
+    # VIDEO SCALING / CREATE MISSING FORMAT
     # ----------------------------
+    # Determine requested resolution from format_id
+    target_height = None
+    if format_id and format_id.lower().endswith("p"):
+        try:
+            target_height = int(format_id.lower().replace("p",""))
+        except:
+            pass
+
+    if target_height:
+        try:
+            scaled_path = final_path.replace(".mp4", f"_{target_height}p.mp4")
+            scale_video(final_path, scaled_path, target_height)
+            os.remove(final_path)
+            final_path = scaled_path
+        except Exception:
+            pass
+
     update_db(task_id, filepath=final_path, status="finished")
 
 # ----------------------------

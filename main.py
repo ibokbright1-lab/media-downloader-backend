@@ -12,8 +12,8 @@ from database.db import SessionLocal, Base, engine
 from database.models import Download
 from celery_app import celery_app
 
-# Import extractor router
-from downloader.extractor import router as extractor_router
+# Import extractor router and function
+from downloader.extractor import router as extractor_router, extract_info
 from downloader.download import get_status, pause_task, resume_task, start_download
 
 # -----------------------------------
@@ -26,7 +26,7 @@ Base.metadata.create_all(bind=engine)
 # -----------------------------------
 app = FastAPI(
     title="Media Downloader Backend",
-    version="1.0.2",
+    version="1.0.3",
 )
 
 # Include extractor routes
@@ -48,8 +48,8 @@ def get_db():
 class StartDownloadRequest(BaseModel):
     url: str
     is_audio: bool = False
+    format_id: str  # exact format selected from frontend
     audio_bitrate: Optional[str] = "128k"
-    quality: Optional[str] = "720p"  # 360p, 480p, 720p, 1080p
 
 # -----------------------------------
 # Root & Health
@@ -67,7 +67,28 @@ def health():
     return {"status": "ok"}
 
 # -----------------------------------
-# Start Download
+# Get available formats (NEW)
+# -----------------------------------
+@app.get("/formats")
+def api_formats(url: str):
+    """
+    Returns available audio and video formats for a given URL.
+    Frontend can use this to display options to the user before download.
+    """
+    info = extract_info(url)
+    if not info.get("success"):
+        raise HTTPException(status_code=400, detail=info.get("error"))
+
+    return {
+        "title": info.get("title"),
+        "thumbnail": info.get("thumbnail"),
+        "duration": info.get("duration"),
+        "video_formats": info.get("video_formats"),
+        "audio_formats": info.get("audio_formats"),
+    }
+
+# -----------------------------------
+# Start Download (updated)
 # -----------------------------------
 @app.post("/download")
 def api_download(req: StartDownloadRequest, db: Session = Depends(get_db)):
@@ -79,7 +100,7 @@ def api_download(req: StartDownloadRequest, db: Session = Depends(get_db)):
         id=task_id,
         url=req.url,
         title="",
-        format_id=req.quality,  # Store quality in format_id for reference
+        format_id=req.format_id,  # store exact format selected
         is_audio=req.is_audio,
         audio_bitrate=req.audio_bitrate,
         status="queued",
@@ -89,20 +110,19 @@ def api_download(req: StartDownloadRequest, db: Session = Depends(get_db)):
     db.add(new_download)
     db.commit()
 
-    # Start download using Celery (or fallback)
+    # Start download using Celery or local fallback
     try:
         celery_app.send_task(
             "downloader.download.start_download_task",
-            args=[task_id, req.url, req.quality, req.is_audio, req.audio_bitrate],
+            args=[task_id, req.url, req.format_id, req.is_audio, req.audio_bitrate],
         )
     except Exception:
         from concurrent.futures import ThreadPoolExecutor
-
         ThreadPoolExecutor(max_workers=1).submit(
             start_download,
             task_id,
             req.url,
-            req.quality,
+            req.format_id,
             req.is_audio,
             req.audio_bitrate,
         )

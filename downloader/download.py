@@ -166,20 +166,32 @@ def start_download_task(self, task_id, url, quality="720p", is_audio=False, audi
     format_string = build_format_string(quality)
 
     ydl_opts = {
-        "outtmpl": out_template,
-        "continuedl": True,
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "progress_hooks": [progress_hook_factory(task_id)],
-        "format": format_string,
-        "concurrent_fragment_downloads": 5,
-        "retries": 10,
-        "extract_flat": False,
-        "force_generic_extractor": False,
-        "nocheckcertificate": True,
-        "cookiefile": os.path.join(os.getcwd(), "cookies.txt") if os.path.exists("cookies.txt") else None,
-    }
+    "outtmpl": out_template,
+    "continuedl": True,
+    "noplaylist": True,
+    "quiet": True,
+    "no_warnings": True,
+    "progress_hooks": [progress_hook_factory(task_id)],
+
+    "format": format_string,
+
+    "merge_output_format": "mp4",
+
+    "concurrent_fragment_downloads": 5,
+    "retries": 10,
+
+    "ignoreerrors": True,
+
+    "nocheckcertificate": True,
+
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0"
+    },
+
+    "cookiefile": os.path.join(os.getcwd(), "cookies.txt")
+    if os.path.exists("cookies.txt")
+    else None,
+}
 
     update_db(task_id, status="started")
 
@@ -286,4 +298,5 @@ def get_status(task_id: str):
 # ----------------------------
 def start_download(task_id, url, quality="720p", is_audio=False, audio_bitrate="128k"):
     start_download_task(task_id, url, quality, is_audio, audio_bitrate)
+
 

@@ -58,87 +58,85 @@ def get_ydl_options(download: bool = False) -> dict:
 # ----------------------------
 # Extract video information
 # ----------------------------
+# ----------------------------
+# Extract video information
+# ----------------------------
 def extract_info(url: str) -> Dict[str, Any]:
     try:
         with YoutubeDL(get_ydl_options(download=False)) as ydl:
             info = ydl.extract_info(url, download=False)
 
         if not info:
-            return {"success": False, "error": "Unable to extract video information"}
+            # Return safe empty values instead of null
+            return {
+                "success": False,
+                "title": "",
+                "thumbnail": "",
+                "duration": 0,
+                "video_formats": [],
+                "audio_formats": [],
+                "error": "Unable to extract video information"
+            }
 
-        title = info.get("title")
-        thumbnail = info.get("thumbnail")
-        duration = float(info.get("duration", 0)) if info.get("duration") else None
+        title = info.get("title") or ""
+        thumbnail = info.get("thumbnail") or ""
+        duration = float(info.get("duration")) if info.get("duration") else 0
 
         video_formats = []
         audio_formats = []
 
-        seen_video = set()
-        seen_audio = set()
-
         for f in info.get("formats", []):
-
             format_id = f.get("format_id")
             if not format_id:
                 continue
 
+            # Base format data
+            format_data = {
+                "format_id": format_id,
+                "ext": f.get("ext") or "",
+                "filesize": f.get("filesize") or 0,
+                "fps": f.get("fps") or 0,
+                "vcodec": f.get("vcodec") or "",
+                "acodec": f.get("acodec") or "",
+            }
+
+            # Video formats
             height = f.get("height")
+            if height and f.get("vcodec") != "none":
+                format_data.update({
+                    "resolution": f"{height}p",
+                    "height": height
+                })
+                video_formats.append(format_data)
+
+            # Audio formats
             abr = f.get("abr")
-            vcodec = f.get("vcodec")
-            acodec = f.get("acodec")
-
-            # ----------------------------
-            # VIDEO FORMATS
-            # ----------------------------
-            if height and vcodec != "none":
-                quality = f"{height}p"
-                if quality not in seen_video:
-                    video_formats.append({
-                        "format_id": format_id,
-                        "ext": f.get("ext"),
-                        "resolution": quality,
-                        "height": height,
-                        "fps": f.get("fps"),
-                        "vcodec": vcodec,
-                        "acodec": acodec,
-                        "filesize": f.get("filesize"),
-                    })
-                    seen_video.add(quality)
-
-            # ----------------------------
-            # AUDIO FORMATS
-            # ----------------------------
-            elif abr and acodec != "none":
-                bitrate = f"{int(abr)}k"
-                if bitrate not in seen_audio:
-                    audio_formats.append({
-                        "format_id": format_id,
-                        "ext": f.get("ext"),
-                        "audio_bitrate": bitrate,
-                        "acodec": acodec,
-                        "filesize": f.get("filesize"),
-                    })
-                    seen_audio.add(bitrate)
-
-        # Sort formats: high → low
-        video_formats.sort(key=lambda x: x["height"], reverse=True)
-        audio_formats.sort(key=lambda x: int(x["audio_bitrate"].replace("k", "")), reverse=True)
+            if abr and f.get("acodec") != "none":
+                format_data.update({
+                    "audio_bitrate": abr
+                })
+                audio_formats.append(format_data)
 
         return {
             "success": True,
             "title": title,
             "thumbnail": thumbnail,
             "duration": duration,
-            "video_formats": video_formats,
-            "audio_formats": audio_formats,
+            "video_formats": video_formats or [],
+            "audio_formats": audio_formats or [],
         }
 
-    except DownloadError as e:
-        return {"success": False, "error": str(e)}
-
     except Exception as e:
-        return {"success": False, "error": f"Unexpected error: {str(e)}"}
-
+        # Always return safe JSON
+        return {
+            "success": False,
+            "title": "",
+            "thumbnail": "",
+            "duration": 0,
+            "video_formats": [],
+            "audio_formats": [],
+            "error": f"{str(e) or 'Unexpected error'}"
+        }
 
 # ----------------------------
 # REQUEST MODEL
@@ -168,3 +166,4 @@ def api_extract(payload: ExtractRequest):
         video_formats=info.get("video_formats"),
         audio_formats=info.get("audio_formats"),
     )
+

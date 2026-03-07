@@ -1,16 +1,11 @@
-# downloader/extractor.py
-
 import os
 from typing import Dict, Any, List, Optional
 
 from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadError
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter()
-
 
 # ----------------------------
 # API RESPONSE MODEL
@@ -23,7 +18,6 @@ class ExtractResponse(BaseModel):
     video_formats: Optional[List[Dict[str, Any]]] = None
     audio_formats: Optional[List[Dict[str, Any]]] = None
     error: Optional[str] = None
-
 
 # ----------------------------
 # yt-dlp options
@@ -54,10 +48,6 @@ def get_ydl_options(download: bool = False) -> dict:
 
     return ydl_opts
 
-
-# ----------------------------
-# Extract video information
-# ----------------------------
 # ----------------------------
 # Extract video information
 # ----------------------------
@@ -67,7 +57,6 @@ def extract_info(url: str) -> Dict[str, Any]:
             info = ydl.extract_info(url, download=False)
 
         if not info:
-            # Return safe empty values instead of null
             return {
                 "success": False,
                 "title": "",
@@ -90,32 +79,39 @@ def extract_info(url: str) -> Dict[str, Any]:
             if not format_id:
                 continue
 
-            # Base format data
-            format_data = {
-                "format_id": format_id,
-                "ext": f.get("ext") or "",
-                "filesize": f.get("filesize") or 0,
-                "fps": f.get("fps") or 0,
-                "vcodec": f.get("vcodec") or "",
-                "acodec": f.get("acodec") or "",
-            }
-
-            # Video formats
             height = f.get("height")
-            if height and f.get("vcodec") != "none":
-                format_data.update({
-                    "resolution": f"{height}p",
-                    "height": height
-                })
-                video_formats.append(format_data)
-
-            # Audio formats
             abr = f.get("abr")
-            if abr and f.get("acodec") != "none":
-                format_data.update({
-                    "audio_bitrate": abr
+
+            # ---------------- VIDEO ----------------
+            if height and f.get("vcodec") != "none":
+                video_formats.append({
+                    "format_id": format_id,
+                    "resolution": f"{height}p",
+                    "height": height,
+                    "ext": f.get("ext") or "",
+                    "filesize": f.get("filesize") or 0,
+                    "fps": f.get("fps") or 0,
+                    "vcodec": f.get("vcodec") or ""
                 })
-                audio_formats.append(format_data)
+
+            # ---------------- AUDIO ----------------
+            if abr and f.get("acodec") != "none":
+                audio_formats.append({
+                    "format_id": format_id,
+                    "audio_bitrate": abr,
+                    "ext": f.get("ext") or "",
+                    "filesize": f.get("filesize") or 0,
+                    "acodec": f.get("acodec") or ""
+                })
+
+        # Remove duplicate video resolutions
+        seen = set()
+        unique_video = []
+        for v in video_formats:
+            if v["resolution"] not in seen:
+                seen.add(v["resolution"])
+                unique_video.append(v)
+        video_formats = unique_video
 
         return {
             "success": True,
@@ -127,7 +123,6 @@ def extract_info(url: str) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        # Always return safe JSON
         return {
             "success": False,
             "title": "",
@@ -143,7 +138,6 @@ def extract_info(url: str) -> Dict[str, Any]:
 # ----------------------------
 class ExtractRequest(BaseModel):
     url: str
-
 
 # ----------------------------
 # API ENDPOINT
@@ -166,4 +160,3 @@ def api_extract(payload: ExtractRequest):
         video_formats=info.get("video_formats"),
         audio_formats=info.get("audio_formats"),
     )
-

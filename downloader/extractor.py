@@ -1,3 +1,5 @@
+# downloader/extractor.py
+
 import os
 from typing import Dict, Any, List, Optional
 
@@ -6,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter()
+
 
 # ----------------------------
 # API RESPONSE MODEL
@@ -19,6 +22,14 @@ class ExtractResponse(BaseModel):
     audio_formats: Optional[List[Dict[str, Any]]] = None
     error: Optional[str] = None
 
+
+# ----------------------------
+# REQUEST MODEL
+# ----------------------------
+class ExtractRequest(BaseModel):
+    url: str
+
+
 # ----------------------------
 # yt-dlp options
 # ----------------------------
@@ -30,7 +41,7 @@ def get_ydl_options(download: bool = False) -> dict:
         "no_warnings": True,
         "noplaylist": True,
         "nocheckcertificate": True,
-        "dump_single_json": False,
+        "dump_single_json": True,
         "user_agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -48,6 +59,7 @@ def get_ydl_options(download: bool = False) -> dict:
 
     return ydl_opts
 
+
 # ----------------------------
 # Extract video information
 # ----------------------------
@@ -64,12 +76,12 @@ def extract_info(url: str) -> Dict[str, Any]:
                 "duration": 0,
                 "video_formats": [],
                 "audio_formats": [],
-                "error": "Unable to extract video information"
+                "error": "Unable to extract video information",
             }
 
-        title = info.get("title") or ""
-        thumbnail = info.get("thumbnail") or ""
-        duration = float(info.get("duration")) if info.get("duration") else 0
+        title = info.get("title", "")
+        thumbnail = info.get("thumbnail", "")
+        duration = float(info.get("duration") or 0)
 
         video_formats = []
         audio_formats = []
@@ -79,39 +91,29 @@ def extract_info(url: str) -> Dict[str, Any]:
             if not format_id:
                 continue
 
-            height = f.get("height")
-            abr = f.get("abr")
-
-            # ---------------- VIDEO ----------------
-            if height and f.get("vcodec") != "none":
+            # Video formats
+            if f.get("vcodec") != "none":
                 video_formats.append({
                     "format_id": format_id,
-                    "resolution": f"{height}p",
-                    "height": height,
-                    "ext": f.get("ext") or "",
-                    "filesize": f.get("filesize") or 0,
+                    "ext": f.get("ext", ""),
+                    "resolution": f.get("height") or 0,
+                    "height": f.get("height") or 0,
                     "fps": f.get("fps") or 0,
-                    "vcodec": f.get("vcodec") or ""
+                    "filesize": f.get("filesize") or 0,
+                    "vcodec": f.get("vcodec", ""),
+                    "acodec": f.get("acodec", ""),
                 })
 
-            # ---------------- AUDIO ----------------
-            if abr and f.get("acodec") != "none":
+            # Audio formats
+            if f.get("acodec") != "none":
                 audio_formats.append({
                     "format_id": format_id,
-                    "audio_bitrate": abr,
-                    "ext": f.get("ext") or "",
+                    "ext": f.get("ext", ""),
+                    "audio_bitrate": f.get("abr") or 0,
                     "filesize": f.get("filesize") or 0,
-                    "acodec": f.get("acodec") or ""
+                    "vcodec": f.get("vcodec", ""),
+                    "acodec": f.get("acodec", ""),
                 })
-
-        # Remove duplicate video resolutions
-        seen = set()
-        unique_video = []
-        for v in video_formats:
-            if v["resolution"] not in seen:
-                seen.add(v["resolution"])
-                unique_video.append(v)
-        video_formats = unique_video
 
         return {
             "success": True,
@@ -130,14 +132,9 @@ def extract_info(url: str) -> Dict[str, Any]:
             "duration": 0,
             "video_formats": [],
             "audio_formats": [],
-            "error": f"{str(e) or 'Unexpected error'}"
+            "error": str(e) or "Unexpected error",
         }
 
-# ----------------------------
-# REQUEST MODEL
-# ----------------------------
-class ExtractRequest(BaseModel):
-    url: str
 
 # ----------------------------
 # API ENDPOINT
@@ -149,14 +146,12 @@ def api_extract(payload: ExtractRequest):
 
     info = extract_info(payload.url)
 
-    if not info.get("success"):
-        return ExtractResponse(success=False, error=info.get("error"))
-
     return ExtractResponse(
-        success=True,
+        success=info.get("success", False),
         title=info.get("title"),
         thumbnail=info.get("thumbnail"),
         duration=info.get("duration"),
-        video_formats=info.get("video_formats"),
-        audio_formats=info.get("audio_formats"),
+        video_formats=info.get("video_formats") or [],
+        audio_formats=info.get("audio_formats") or [],
+        error=info.get("error"),
     )

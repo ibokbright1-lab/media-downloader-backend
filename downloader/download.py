@@ -3,6 +3,7 @@
 import os
 import subprocess
 from datetime import datetime, timedelta
+from downloader.converter import convert_audio, scale_video
 
 import yt_dlp
 from sqlalchemy.orm import Session
@@ -255,3 +256,4 @@ def get_status(task_id: str):
 # ----------------------------
 def start_download(task_id, url, format_id=None, is_audio=False, audio_bitrate="128k"):
     start_download_task(task_id, url, format_id, is_audio, audio_bitrate)
+

@@ -15,7 +15,7 @@ from celery_app import celery_app
 # Import extractor router and function
 from downloader.extractor import router as extractor_router, extract_info
 from downloader.download import get_status, pause_task, resume_task, start_download
-
+from downloader.download import start_download_task
 # -----------------------------------
 # Database Setup
 # -----------------------------------

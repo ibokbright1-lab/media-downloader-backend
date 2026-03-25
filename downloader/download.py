@@ -134,7 +134,7 @@ def start_download_task(self, task_id, url, format_id=None, is_audio=False, audi
         "quiet": True,
         "no_warnings": True,
         "progress_hooks": [progress_hook_factory(task_id)],
-        "format": build_format_string(format_id, is_audio),
+        "format": safe_format_selector(format_id, fallback, is_audio),
         "merge_output_format": "mp4",
         "retries": 10,
         "concurrent_fragment_downloads": 5,
@@ -249,7 +249,16 @@ def get_status(task_id: str):
         "eta": row.eta,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+def safe_format_selector(format_id: str, fallback: str, is_audio=False):
 
+    if is_audio:
+        return format_id or "bestaudio/best"
+
+    return (
+        f"{format_id}+bestaudio/"
+        f"{fallback}/"
+        "best"
+    )
 # ----------------------------
 # Local fallback
 # ----------------------------

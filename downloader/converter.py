@@ -1,7 +1,12 @@
+# downloader/converter.py
+
 import subprocess
 import os
 
 
+# ----------------------------
+# Core Runner
+# ----------------------------
 def run_command(command: list):
     """
     Run an ffmpeg command safely and raise error if it fails.
@@ -19,11 +24,10 @@ def run_command(command: list):
     return process.stdout
 
 
+# ----------------------------
+# Merge Video + Audio
+# ----------------------------
 def merge_video_audio(video_path: str, audio_path: str, output_path: str):
-    """
-    Merge a video-only file and an audio-only file into a single video.
-    """
-
     command = [
         "ffmpeg",
         "-y",
@@ -38,11 +42,10 @@ def merge_video_audio(video_path: str, audio_path: str, output_path: str):
     return output_path
 
 
+# ----------------------------
+# Convert Video to MP4
+# ----------------------------
 def convert_video(input_file: str, output_file: str):
-    """
-    Convert video to mp4 (useful when source is webm or mkv).
-    """
-
     command = [
         "ffmpeg",
         "-y",
@@ -56,11 +59,10 @@ def convert_video(input_file: str, output_file: str):
     return output_file
 
 
+# ----------------------------
+# Convert Audio (Generic)
+# ----------------------------
 def convert_audio(input_file: str, output_file: str):
-    """
-    Convert audio to mp3.
-    """
-
     command = [
         "ffmpeg",
         "-y",
@@ -75,9 +77,37 @@ def convert_audio(input_file: str, output_file: str):
     return output_file
 
 
+# ----------------------------
+# ✅ REQUIRED FIX (THIS WAS MISSING)
+# ----------------------------
+def convert_to_mp3(input_file: str, output_file: str, bitrate="192k"):
+    """
+    Explicit MP3 converter (used by download.py)
+    """
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i", input_file,
+        "-vn",
+        "-acodec", "libmp3lame",
+        "-ab", bitrate,
+        "-ar", "44100",
+        "-ac", "2",
+        output_file
+    ]
+
+    run_command(command)
+    return output_file
+
+
+# ----------------------------
+# Scale Video (CRITICAL FEATURE)
+# ----------------------------
 def scale_video(input_file: str, resolution: int, output_file: str):
     """
-    Scale video to a specific resolution (e.g., 720p, 480p).
+    Scale video to target resolution (this enables your
+    'generate missing formats' feature)
     """
 
     command = [
@@ -86,7 +116,10 @@ def scale_video(input_file: str, resolution: int, output_file: str):
         "-i", input_file,
         "-vf", f"scale=-2:{resolution}",
         "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
         "-c:a", "aac",
+        "-b:a", "128k",
         output_file
     ]
 
@@ -94,11 +127,10 @@ def scale_video(input_file: str, resolution: int, output_file: str):
     return output_file
 
 
+# ----------------------------
+# Cleanup
+# ----------------------------
 def cleanup_files(*files):
-    """
-    Remove temporary files after processing.
-    """
-
     for file in files:
         if file and os.path.exists(file):
             os.remove(file)

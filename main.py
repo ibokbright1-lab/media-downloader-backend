@@ -48,9 +48,9 @@ def get_db():
 class StartDownloadRequest(BaseModel):
     url: str
     is_audio: bool = False
-    format_id: str  # exact format selected from frontend
+    format_id: Optional[str] = None
+    fallback: Optional[str] = None   # ✅ NEW
     audio_bitrate: Optional[str] = "128k"
-
 # -----------------------------------
 # Root & Health
 # -----------------------------------
@@ -114,7 +114,7 @@ def api_download(req: StartDownloadRequest, db: Session = Depends(get_db)):
     try:
         celery_app.send_task(
             "downloader.download.start_download_task",
-            args=[task_id, req.url, req.format_id, req.is_audio, req.audio_bitrate],
+            args=[task_id, req.url, req.format_id, req.fallback, req.is_audio, req.audio_bitrate]
         )
     except Exception:
         from concurrent.futures import ThreadPoolExecutor

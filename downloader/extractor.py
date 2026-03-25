@@ -1,5 +1,5 @@
 # downloader/extractor.py
-
+from downloader.cache import get_cache, set_cache
 import os
 from typing import Dict, Any, List, Optional
 
@@ -66,11 +66,11 @@ def get_ydl_options(download: bool = False) -> dict:
 
 # ----------------------------
 # Extract video information
-# ----------------------------
-def extract_info(url: str) -> Dict[str, Any]:
+STANDARD_RESOLUTIONS = [144, 240, 360, 480, 720, 1080]
 
+def extract_info(url: str) -> Dict[str, Any]:
     try:
-        with YoutubeDL(get_ydl_options(download=False)) as ydl:
+        with YoutubeDL(get_ydl_options()) as ydl:
             info = ydl.extract_info(url, download=False)
 
         if not info:
@@ -83,83 +83,63 @@ def extract_info(url: str) -> Dict[str, Any]:
         yt_formats = info.get("formats", [])
 
         # --------------------------------
-        # Collect all available formats by resolution
+        # Map available formats
         # --------------------------------
-        available_resolutions = {}
+        available = {}
 
         for f in yt_formats:
-
-            height = f.get("height")
-
-            # Skip invalid entries
-            if not height:
-                continue
-
-            if f.get("vcodec") == "none":
-                continue
-
-            if height not in available_resolutions:
-                available_resolutions[height] = []
-
-            available_resolutions[height].append({
-                "format_id": f.get("format_id"),
-                "ext": f.get("ext"),
-                "filesize": f.get("filesize") or 0,
-                "fps": f.get("fps") or 0
-            })
+            h = f.get("height")
+            if h and f.get("vcodec") != "none":
+                available.setdefault(h, []).append(f.get("format_id"))
 
         # --------------------------------
-        # Normalize to standard resolutions
+        # FORCE GENERATE FORMATS
         # --------------------------------
         video_formats = []
 
-        sorted_heights = sorted(available_resolutions.keys())
-
         for res in STANDARD_RESOLUTIONS:
 
-            selected_format_id = None
+            format_id = None
 
-            for h in sorted_heights:
+            # Find best match ≥ requested
+            for h in sorted(available.keys()):
                 if h >= res:
-                    selected_format_id = available_resolutions[h][0]["format_id"]
+                    format_id = available[h][0]
                     break
 
             video_formats.append({
                 "resolution": f"{res}p",
                 "height": res,
-                "format_id": selected_format_id,
-                "generated": selected_format_id is None
+                "format_id": format_id,
+                "generated": format_id is None,
+
+                # VERY IMPORTANT (frontend uses this)
+                "fallback": f"bestvideo[height<={res}]+bestaudio/best[height<={res}]/best"
             })
 
         # --------------------------------
-        # Audio formats
+        # AUDIO FORMATS
         # --------------------------------
         audio_formats = []
 
         for f in yt_formats:
-
             if f.get("acodec") != "none" and f.get("vcodec") == "none":
-
                 audio_formats.append({
                     "format_id": f.get("format_id"),
                     "ext": f.get("ext"),
-                    "audio_bitrate": f.get("abr") or 0
+                    "audio_bitrate": f.get("abr") or 0,
+                    "fallback": "bestaudio/best"
                 })
 
-        # --------------------------------
-        # FORCE fallback if formats missing
-        # --------------------------------
-        if not video_formats:
-
-            video_formats = []
-
-            for res in STANDARD_RESOLUTIONS:
-                video_formats.append({
-                    "resolution": f"{res}p",
-                    "height": res,
-                    "format_id": None,
-                    "generated": True
-                })
+        # fallback audio if empty
+        if not audio_formats:
+            audio_formats.append({
+                "format_id": None,
+                "ext": "mp3",
+                "audio_bitrate": 128,
+                "fallback": "bestaudio/best",
+                "generated": True
+            })
 
         return {
             "success": True,
@@ -171,7 +151,6 @@ def extract_info(url: str) -> Dict[str, Any]:
         }
 
     except Exception as e:
-
         return {
             "success": False,
             "title": "",
@@ -180,7 +159,7 @@ def extract_info(url: str) -> Dict[str, Any]:
             "video_formats": [],
             "audio_formats": [],
             "error": str(e)
-        }
+            }
 # ----------------------------
 # API ENDPOINT
 # ----------------------------

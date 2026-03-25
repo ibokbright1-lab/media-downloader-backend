@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 import yt_dlp
 from sqlalchemy.orm import Session
-
+from downloader.converter import scale_video, convert_to_mp3
 from database.db import SessionLocal
 from database.models import Download
 from redis_client import set_task_state, get_task_state, delete_task_state

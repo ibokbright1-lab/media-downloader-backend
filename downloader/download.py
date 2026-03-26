@@ -45,24 +45,49 @@ def update_db(task_id: str, **kwargs):
 def progress_hook_factory(task_id):
     def hook(d):
         status = d.get("status")
+
         if status == "downloading":
-            percent = d.get("_percent_str") or ""
-            speed = d.get("_speed_str") or ""
-            eta = d.get("_eta_str") or ""
+
+            percent_str = d.get("_percent_str") or "0%"
+            speed_str = d.get("_speed_str") or "0"
+            eta_str = d.get("_eta_str") or "0"
+            total_size = d.get("_total_bytes_str") or ""
+            downloaded_size = d.get("_downloaded_bytes_str") or ""
+
+            # Convert percent to float
+            try:
+                percent = float(percent_str.replace("%", "").strip())
+            except:
+                percent = 0.0
+
             update_db(
                 task_id,
                 status="downloading",
-                progress_percent=percent,
-                speed=str(speed),
-                eta=str(eta),
+                progress_percent=percent,   # ✅ numeric now
+                speed=speed_str,
+                eta=eta_str,
+                total_size=total_size,      # ✅ NEW
+                downloaded_size=downloaded_size,  # ✅ NEW
             )
+
+            # Pause handling (unchanged)
             ctrl = get_task_state(task_id) or {}
             if ctrl.get("paused"):
                 raise yt_dlp.utils.DownloadError("Paused by user")
+
         elif status == "finished":
+
             filename = d.get("filename")
-            update_db(task_id, status="processing", filepath=filename)
+
+            update_db(
+                task_id,
+                status="processing",
+                filepath=filename,
+                progress_percent=100  # ✅ ensure completion
+            )
+
             delete_task_state(task_id)
+
     return hook
 
 # ----------------------------

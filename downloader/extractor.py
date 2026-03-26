@@ -43,9 +43,13 @@ def get_ydl_options(download: bool = False) -> dict:
         "no_warnings": True,
         "noplaylist": True,
         "nocheckcertificate": True,
-        "skip_download": True,
-        "simulate": True,
-        "extract_flat": False,
+
+        # ❌ REMOVE THESE
+        # "skip_download": True,
+        # "simulate": True,
+
+        "extract_flat": False,  # IMPORTANT: full extraction
+
         "user_agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -62,7 +66,6 @@ def get_ydl_options(download: bool = False) -> dict:
         ydl_opts["outtmpl"] = "downloads/%(title)s.%(ext)s"
 
     return ydl_opts
-
 
 # ----------------------------
 # Extract video information

@@ -11,7 +11,7 @@ from database.db import SessionLocal
 from database.models import Download
 from redis_client import set_task_state, get_task_state, delete_task_state
 from celery_app import celery_app
-
+from utils.progress import human_readable_bytes
 # ----------------------------
 # Paths
 # ----------------------------
@@ -51,8 +51,14 @@ def progress_hook_factory(task_id):
             percent_str = d.get("_percent_str") or "0%"
             speed_str = d.get("_speed_str") or "0"
             eta_str = d.get("_eta_str") or "0"
-            total_size = d.get("_total_bytes_str") or ""
-            downloaded_size = d.get("_downloaded_bytes_str") or ""
+
+            # Raw bytes (more reliable)
+            total_bytes = d.get("_total_bytes")
+            downloaded_bytes = d.get("_downloaded_bytes")
+
+            # Fallback strings
+            total_size_str = d.get("_total_bytes_str")
+            downloaded_size_str = d.get("_downloaded_bytes_str")
 
             # Convert percent to float
             try:
@@ -60,14 +66,27 @@ def progress_hook_factory(task_id):
             except:
                 percent = 0.0
 
+            # ----------------------------
+            # Handle size properly
+            # ----------------------------
+            if total_bytes:
+                total_size = human_readable_bytes(total_bytes)
+            else:
+                total_size = total_size_str or ""
+
+            if downloaded_bytes:
+                downloaded_size = human_readable_bytes(downloaded_bytes)
+            else:
+                downloaded_size = downloaded_size_str or ""
+
             update_db(
                 task_id,
                 status="downloading",
-                progress_percent=percent,   # ✅ numeric now
+                progress_percent=percent,
                 speed=speed_str,
                 eta=eta_str,
-                total_size=total_size,      # ✅ NEW
-                downloaded_size=downloaded_size,  # ✅ NEW
+                total_size=total_size,
+                downloaded_size=downloaded_size,
             )
 
             # Pause handling (unchanged)
@@ -83,13 +102,12 @@ def progress_hook_factory(task_id):
                 task_id,
                 status="processing",
                 filepath=filename,
-                progress_percent=100  # ✅ ensure completion
+                progress_percent=100
             )
 
             delete_task_state(task_id)
 
     return hook
-
 # ----------------------------
 # Restart if paused too long
 # ----------------------------

@@ -71,20 +71,27 @@ def health():
 # -----------------------------------
 @app.get("/formats")
 def api_formats(url: str):
-    """
-    Returns available audio and video formats for a given URL.
-    Frontend can use this to display options to the user before download.
-    """
     info = extract_info(url)
-    if not info.get("success"):
-        raise HTTPException(status_code=400, detail=info.get("error"))
 
+    # ALWAYS return something (never block frontend)
     return {
-        "title": info.get("title"),
-        "thumbnail": info.get("thumbnail"),
-        "duration": info.get("duration"),
-        "video_formats": info.get("video_formats"),
-        "audio_formats": info.get("audio_formats"),
+        "success": info.get("success", False),
+        "title": info.get("title", ""),
+        "thumbnail": info.get("thumbnail", ""),
+        "duration": info.get("duration", 0),
+
+        # 🔥 guarantee UI always gets options
+        "video_formats": info.get("video_formats") or [
+            {"resolution": "360p", "height": 360, "format_id": None, "generated": True},
+            {"resolution": "480p", "height": 480, "format_id": None, "generated": True},
+            {"resolution": "720p", "height": 720, "format_id": None, "generated": True},
+        ],
+
+        "audio_formats": info.get("audio_formats") or [
+            {"format_id": None, "audio_bitrate": 128}
+        ],
+
+        "error": info.get("error")
     }
 
 # -----------------------------------
